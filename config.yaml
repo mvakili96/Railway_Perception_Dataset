@@ -1,0 +1,18 @@
+# config.yaml
+image:
+  path: "/media/m_vakili/New Volume/My_projects/Hand_Labeling/jpgs/rs19_val/rs{num:05d}.jpg"    
+  window_name: "Click 2 points"
+  max_points: 2
+
+labels:
+  path: "/media/m_vakili/New Volume/My_projects/Hand_Labeling/Railsem_updated_raw_by_MJ/railsem_original_modified{num}.json"                        
+
+dataset_indices: [419]
+
+draw:
+  point_radius: 4
+  color_bgr: [0, 255, 0]               
+  thickness: -1                       
+
+save_dir: "./Generated_dataset/"
+
