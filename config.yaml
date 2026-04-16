@@ -1,13 +1,28 @@
 # config.yaml
 image:
-  path: "/media/m_vakili/New Volume/My_projects/Hand_Labeling/jpgs/rs19_val/rs{num:05d}.jpg"    
+  path: "./rs19_val/rs{num:05d}.jpg"    
   window_name: "Click 2 points"
   max_points: 2
 
 labels:
-  path: "/media/m_vakili/New Volume/My_projects/Hand_Labeling/Railsem_updated_raw_by_MJ/railsem_original_modified{num}.json"                        
+  path: "./Railsem_updated_raw_by_MJ/railsem_original_modified{num}.json"                        
 
-dataset_indices: [419]
+dataset_indices: [1012, 1020, 1021, 1037, 1061, 1088, 1101, 1108,
+    1121, 1338, 1473, 1692, 1913,
+    1138, 1342, 1474, 1694, 1918,
+    1157, 1343, 1499, 1697, 1952,
+    1160, 1349, 1508, 1699, 1958,
+    1178, 1355, 1519, 1712, 1959,
+    1210, 1356, 1523, 1718, 1985,
+    1213, 1363, 1528, 1730, 2002,
+    1226, 1379, 1548, 1750,
+    1232, 1385, 1625, 1782,
+    1245, 1398, 1642, 1809,
+    1252, 1401, 1658, 1812,
+    1258, 1425, 1669, 1824,
+    1260, 1435, 1687, 1849,
+    1306, 1452, 1689, 1868,
+    1326, 1905]
 
 draw:
   point_radius: 4
@@ -16,3 +31,7 @@ draw:
 
 save_dir: "./Generated_dataset/"
 
+weight_map:
+  save: true
+  visualize: true
+  filename_suffix: "_weight.png"

@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 Generated_dataset/
 preview.py
+Railsem_updated_raw_by_MJ/
+.DS_Store
+rs19_val/
+train.json
+train/
