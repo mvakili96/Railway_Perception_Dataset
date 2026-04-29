@@ -22,25 +22,26 @@ def polygon_to_mask(points, shape_hw):
     return mask
 
 
-def build_weight_map(cropped_labels, selected_idx, crop_shape):
-    crop_h, crop_w = crop_shape[:2]
-    masks = [polygon_to_mask(label, (crop_h, crop_w)) for label in cropped_labels]
+def build_full_track_bed_masks(labels_raw, image_shape):
+    image_h, image_w = image_shape[:2]
+    return [polygon_to_mask(label, (image_h, image_w)) for label in labels_raw]
 
-    if not masks:
+
+def build_weight_map(full_masks, ego_full_idx, overlap_full_idx, crop_bounds):
+    min_x, min_y, max_x, max_y = crop_bounds
+    crop_h = max_y - min_y
+    crop_w = max_x - min_x
+
+    if not full_masks:
         return np.zeros((crop_h, crop_w), dtype=np.uint8), np.zeros((crop_h, crop_w), dtype=np.uint8)
 
-    all_track_beds = np.clip(np.sum(masks, axis=0), 0, 1).astype(np.uint8)
-    selected_mask = masks[selected_idx]
-
-    if len(masks) == 1:
-        shared_with_selected = np.zeros_like(selected_mask)
-    else:
-        other_masks = [mask for i, mask in enumerate(masks) if i != selected_idx]
-        others_union = np.clip(np.sum(other_masks, axis=0), 0, 1).astype(np.uint8)
-        shared_with_selected = ((selected_mask == 1) & (others_union == 1)).astype(np.uint8)
-
-    weight_map = all_track_beds.copy()
-    weight_map[shared_with_selected == 1] = 0
+    cropped_masks = [mask[min_y:max_y, min_x:max_x] for mask in full_masks]
+    all_track_beds = np.clip(np.sum(cropped_masks, axis=0), 0, 1).astype(np.uint8)
+    ego_mask = cropped_masks[ego_full_idx]
+    overlap_mask = cropped_masks[overlap_full_idx]
+    shared_with_selected = ((ego_mask == 1) & (overlap_mask == 1)).astype(np.uint8)
+    weight_map = np.logical_xor(ego_mask == 1, overlap_mask == 1).astype(np.uint8)
+    weight_map[all_track_beds == 0] = 0
 
     return weight_map, shared_with_selected
 
@@ -56,6 +57,63 @@ def visualize_weight_map(image_cropped, weight_map, shared_with_selected):
     cv2.destroyWindow("WEIGHT_MAP")
 
 
+def ask_weight_map_mode(image_cropped, use_weight_key, zero_weight_key):
+    image_cropped_copy = copy.deepcopy(image_cropped)
+    instructions = [
+        "Do you want weight map with this?",
+        f"{use_weight_key}: yes, use two-route weighting",
+        f"{zero_weight_key}: no, save all-zero weight map",
+    ]
+
+    for line_idx, text in enumerate(instructions):
+        y = 24 + line_idx * 16
+        cv2.putText(image_cropped_copy, text, (15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(image_cropped_copy, text, (15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1, cv2.LINE_AA)
+
+    cv2.imshow("WINDOW", image_cropped_copy)
+    while True:
+        key = cv2.waitKey(0) & 0xFF
+        if key == ord(use_weight_key):
+            return True
+        if key == ord(zero_weight_key):
+            return False
+
+
+def render_selection_overlay(
+    image_cropped,
+    polygon_points,
+    route_idx,
+    total_routes,
+    ego_display_idx,
+    overlap_display_idx,
+    ego_key,
+    overlap_key,
+    require_overlap_selection,
+):
+    image_cropped_copy = copy.deepcopy(image_cropped)
+    for pixel in polygon_points:
+        x = int(pixel[0])
+        y = int(pixel[1])
+        cv2.circle(image_cropped_copy, (x, y), radius=1, color=(0, 0, 255), thickness=1)
+
+    status_ego = "unset" if ego_display_idx is None else str(ego_display_idx + 1)
+    status_overlap = "unset" if overlap_display_idx is None else str(overlap_display_idx + 1)
+    instructions = [
+        f"Route {route_idx + 1}/{total_routes}",
+        f"{ego_key}: ego route ({status_ego})",
+    ]
+    if require_overlap_selection:
+        instructions.append(f"{overlap_key}: overlap route ({status_overlap})")
+    instructions.append("other key: skip, q: cancel")
+
+    for line_idx, text in enumerate(instructions):
+        y = 24 + line_idx * 16
+        cv2.putText(image_cropped_copy, text, (15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(image_cropped_copy, text, (15, y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1, cv2.LINE_AA)
+
+    return image_cropped_copy
+
+
 def crop_labels(labels_raw, image_raw, points_clicked):
     points_clicked = np.array(points_clicked)
     min_x = min(points_clicked[:, 0])
@@ -64,36 +122,64 @@ def crop_labels(labels_raw, image_raw, points_clicked):
     max_y = max(points_clicked[:, 1])
 
     labels_final = []
-    for obj in labels_raw:
+    labels_indices = []
+    for obj_idx, obj in enumerate(labels_raw):
         object_this = []
         for pixel in obj:
-            if pixel[0] >= min_x and pixel[0] <= max_x and pixel[1] >= min_y and pixel[1] <= max_y:
+            if pixel[0] >= min_x and pixel[0] < max_x and pixel[1] >= min_y and pixel[1] < max_y:
                 object_this.append([pixel[0] - min_x, pixel[1] - min_y])
 
         if object_this:
             labels_final.append(object_this)
+            labels_indices.append(obj_idx)
 
     image_cropped = image_raw[min_y:max_y, min_x:max_x]
+    return labels_final, labels_indices, image_cropped, (min_x, min_y, max_x, max_y)
 
+
+def select_routes(image_cropped, labels_final, labels_indices, ego_key, overlap_key, require_overlap_selection):
     labels_target = None
-    selected_idx = None
+    ego_full_idx = None
+    overlap_full_idx = None
+    ego_display_idx = None
+    overlap_display_idx = None
 
     for idx, obj in enumerate(labels_final):
-        image_cropped_copy = copy.deepcopy(image_cropped)
-        for pixel in obj:
-            x = int(pixel[0])
-            y = int(pixel[1])
-            cv2.circle(image_cropped_copy, (x, y), radius=1, color=(0, 0, 255), thickness=1)
-
+        image_cropped_copy = render_selection_overlay(
+            image_cropped=image_cropped,
+            polygon_points=obj,
+            route_idx=idx,
+            total_routes=len(labels_final),
+            ego_display_idx=ego_display_idx,
+            overlap_display_idx=overlap_display_idx,
+            ego_key=ego_key,
+            overlap_key=overlap_key,
+            require_overlap_selection=require_overlap_selection,
+        )
         cv2.imshow("WINDOW", image_cropped_copy)
         key = cv2.waitKey(0) & 0xFF
-        if key == ord('y'):
+        if key == ord(ego_key):
             labels_target = obj
-            selected_idx = idx
+            ego_full_idx = labels_indices[idx]
+            ego_display_idx = idx
+            print(f"Selected route {idx + 1} as ego-path.")
+        elif require_overlap_selection and key == ord(overlap_key):
+            overlap_full_idx = labels_indices[idx]
+            overlap_display_idx = idx
+            print(f"Selected route {idx + 1} as overlap route.")
+        elif key == ord('q'):
+            break
+
+        if ego_full_idx is not None and (not require_overlap_selection or overlap_full_idx is not None):
+            if require_overlap_selection and ego_full_idx == overlap_full_idx:
+                print("Ego-path and overlap route must be different. Keep selecting.")
+                overlap_full_idx = None
+                overlap_display_idx = None
+                continue
             break
 
     cv2.destroyAllWindows()
-    return labels_target, selected_idx, labels_final, image_cropped
+    return labels_target, ego_full_idx, overlap_full_idx
 
 
 def main(cfg_path="config.yaml"):
@@ -109,11 +195,22 @@ def main(cfg_path="config.yaml"):
     thickness = int(cfg["draw"]["thickness"])
 
     save_dir = cfg["save_dir"]
+    save_dir_path = Path(save_dir).expanduser()
+    save_dir_path.mkdir(parents=True, exist_ok=True)
 
     weight_cfg = cfg.get("weight_map", {})
     save_weight_map = bool(weight_cfg.get("save", True))
     visualize_weight_map_flag = bool(weight_cfg.get("visualize", False))
     weight_suffix = str(weight_cfg.get("filename_suffix", "_weight.png"))
+    ego_key = str(weight_cfg.get("ego_select_key", "y"))[:1]
+    overlap_key = str(weight_cfg.get("overlap_select_key", "o"))[:1]
+    use_weight_key = str(weight_cfg.get("use_weight_key", "d"))[:1]
+    zero_weight_key = str(weight_cfg.get("zero_weight_key", "a"))[:1]
+    if ego_key == overlap_key:
+        raise SystemExit("weight_map.ego_select_key and weight_map.overlap_select_key must be different.")
+    weight_map_dir = save_dir_path / "Weight_Maps"
+    if save_weight_map:
+        weight_map_dir.mkdir(parents=True, exist_ok=True)
 
     label_path_pattern = cfg["labels"]["path"]
     for n in indices:
@@ -128,6 +225,8 @@ def main(cfg_path="config.yaml"):
         img = cv2.imread(str(img_path))
         if img is None:
             raise SystemExit(f"Could not read image: {img_path}")
+
+        full_track_bed_masks = build_full_track_bed_masks(label_unified, img.shape)
 
         points_disp = []
         disp = img
@@ -149,12 +248,49 @@ def main(cfg_path="config.yaml"):
 
         cv2.destroyAllWindows()
 
-        label_target, selected_idx, labels_final, img_crop = crop_labels(label_unified, img, points_disp)
+        labels_final, labels_indices, img_crop, crop_bounds = crop_labels(label_unified, img, points_disp)
 
-        weight_map, shared_with_selected = build_weight_map(labels_final, selected_idx, img_crop.shape)
+        require_overlap_selection = ask_weight_map_mode(img_crop, use_weight_key, zero_weight_key)
+
+        label_target, ego_full_idx, overlap_full_idx = select_routes(
+            img_crop,
+            labels_final,
+            labels_indices,
+            ego_key,
+            overlap_key,
+            require_overlap_selection,
+        )
+
+        if label_target is None or ego_full_idx is None:
+            raise SystemExit(
+                f"Selection incomplete. Press '{ego_key}' for the ego-path to save the sample."
+            )
+
+        if require_overlap_selection:
+            if overlap_full_idx is None:
+                raise SystemExit(
+                    f"Selection incomplete. Press '{ego_key}' for the ego-path and '{overlap_key}' for the overlap route."
+                )
+            weight_map, shared_with_selected = build_weight_map(
+                full_track_bed_masks,
+                ego_full_idx,
+                overlap_full_idx,
+                crop_bounds,
+            )
+        else:
+            crop_h = crop_bounds[3] - crop_bounds[1]
+            crop_w = crop_bounds[2] - crop_bounds[0]
+            weight_map = np.zeros((crop_h, crop_w), dtype=np.uint8)
+            shared_with_selected = np.zeros_like(weight_map)
 
         dict_lisa_format = {}
-        dict_lisa_format["text"] = ["PH1", "PH2", "PH3", "PH4", "PH5", "PH6"]
+        dict_lisa_format["text"] = [
+            "If the right blade is open with a visible rail gap, the right route is the ego-route, and if the left blade is open with a visible rail gap, the left route is the ego-route. Which track bed corresponds to the ego-route through this switch?",
+            "Based on the blade positions in this switch, which track bed corresponds to the route the train takes?",
+            "Which track bed corresponds to the ego-path if the rails of the ego-path are continuously connected?",
+            "By examining the switch geometry, which track bed corresponds to the route that remains continuous for the train?",
+            "Which track bed corresponds to the active route if the rails of the ego-path are continuously connected and the open blade indicates the selected path?"
+            ]
         dict_lisa_format["is_sentence"] = True
 
         shape_dict = {}
@@ -169,12 +305,12 @@ def main(cfg_path="config.yaml"):
 
         dict_lisa_format["shapes"] = [shape_dict]
 
-        cv2.imwrite(str(save_dir + f"rs{n}.jpg"), img_crop)
-        with open(str(save_dir + f"rs{n}.json"), "w") as f:
+        cv2.imwrite(str(save_dir_path / f"rs{n}.jpg"), img_crop)
+        with open(str(save_dir_path / f"rs{n}.json"), "w") as f:
             json.dump(dict_lisa_format, f, indent=2)
 
         if save_weight_map:
-            cv2.imwrite(str(save_dir + f"rs{n}{weight_suffix}"), weight_map)
+            cv2.imwrite(str(weight_map_dir / f"rs{n}{weight_suffix}"), weight_map)
 
         if visualize_weight_map_flag:
             visualize_weight_map(img_crop, weight_map, shared_with_selected)
