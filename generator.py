@@ -285,11 +285,11 @@ def main(cfg_path="config.yaml"):
 
         dict_lisa_format = {}
         dict_lisa_format["text"] = [
-            "If the right blade is open with a visible rail gap, the right route is the ego-route, and if the left blade is open with a visible rail gap, the left route is the ego-route. Which track bed corresponds to the ego-route through this switch?",
-            "Based on the blade positions in this switch, which track bed corresponds to the route the train takes?",
-            "Which track bed corresponds to the ego-path if the rails of the ego-path are continuously connected?",
-            "By examining the switch geometry, which track bed corresponds to the route that remains continuous for the train?",
-            "Which track bed corresponds to the active route if the rails of the ego-path are continuously connected and the open blade indicates the selected path?"
+            "If the right blade is open with a visible rail gap, the right route is the ego-route, and if the left blade is open with a visible rail gap, the left route is the ego-route. Which route corresponds to the ego-route through this switch?",
+            "Based on the blade positions in this switch, which route corresponds to the route the train takes?",
+            "Which path corresponds to the ego-path if the rails of the ego-path are continuously connected?",
+            "By examining the switch geometry, which route corresponds to the route that remains continuous for the train?",
+            "Which route corresponds to the active route if the rails of the ego-path are continuously connected and the open blade indicates the selected path?"
             ]
         dict_lisa_format["is_sentence"] = True
 
