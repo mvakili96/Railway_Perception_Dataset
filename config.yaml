@@ -3,6 +3,7 @@ image:
   path: "./rs19_val/rs{num:05d}.jpg"    
   window_name: "Click 2 points"
   max_points: 2
+  use_fixed_crop: true
 
 labels:
   path: "./Railsem_updated_raw_by_MJ/railsem_original_modified{num}.json"                        

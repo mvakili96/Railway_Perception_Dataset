@@ -14,6 +14,30 @@ def load_config(cfg_path="config.yaml"):
     return cfg
 
 
+def get_crop_bounds_from_points(points_clicked):
+    points_clicked = np.array(points_clicked)
+    min_x = int(min(points_clicked[:, 0]))
+    max_x = int(max(points_clicked[:, 0]))
+    min_y = int(min(points_clicked[:, 1]))
+    max_y = int(max(points_clicked[:, 1]))
+    return min_x, min_y, max_x, max_y
+
+
+def get_fixed_crop_bounds(image_shape, crop_size=1024):
+    image_h, image_w = image_shape[:2]
+    if image_h < crop_size or image_w < crop_size:
+        raise SystemExit(
+            f"Fixed crop of {crop_size}x{crop_size} requires image size at least "
+            f"{crop_size}x{crop_size}, but got {image_w}x{image_h}."
+        )
+
+    min_x = (image_w - crop_size) // 2
+    max_x = min_x + crop_size
+    max_y = image_h
+    min_y = max_y - crop_size
+    return min_x, min_y, max_x, max_y
+
+
 def polygon_to_mask(points, shape_hw):
     mask = np.zeros(shape_hw, dtype=np.uint8)
     if points and len(points) >= 3:
@@ -114,12 +138,8 @@ def render_selection_overlay(
     return image_cropped_copy
 
 
-def crop_labels(labels_raw, image_raw, points_clicked):
-    points_clicked = np.array(points_clicked)
-    min_x = min(points_clicked[:, 0])
-    max_x = max(points_clicked[:, 0])
-    min_y = min(points_clicked[:, 1])
-    max_y = max(points_clicked[:, 1])
+def crop_labels(labels_raw, image_raw, crop_bounds):
+    min_x, min_y, max_x, max_y = crop_bounds
 
     labels_final = []
     labels_indices = []
@@ -189,6 +209,7 @@ def main(cfg_path="config.yaml"):
     window_name = cfg["image"]["window_name"]
     indices = [int(n) for n in cfg.get("dataset_indices", [])]
     max_points = int(cfg["image"]["max_points"])
+    use_fixed_crop = bool(cfg["image"].get("use_fixed_crop", False))
 
     r = int(cfg["draw"]["point_radius"])
     color = tuple(int(c) for c in cfg["draw"]["color_bgr"])
@@ -228,27 +249,36 @@ def main(cfg_path="config.yaml"):
 
         full_track_bed_masks = build_full_track_bed_masks(label_unified, img.shape)
 
-        points_disp = []
-        disp = img
+        if use_fixed_crop:
+            crop_bounds = get_fixed_crop_bounds(img.shape, crop_size=1024)
+        else:
+            points_disp = []
+            disp = img
 
-        def on_mouse(event, x, y, flags, param):
-            if event == cv2.EVENT_LBUTTONDOWN and len(points_disp) < max_points:
-                points_disp.append([x, y])
-                cv2.imshow(window_name, disp)
-                print(f"Point {len(points_disp)} (display): ({x}, {y})")
+            def on_mouse(event, x, y, flags, param):
+                if event == cv2.EVENT_LBUTTONDOWN and len(points_disp) < max_points:
+                    points_disp.append([x, y])
+                    cv2.imshow(window_name, disp)
+                    print(f"Point {len(points_disp)} (display): ({x}, {y})")
 
-        cv2.namedWindow(window_name)
-        cv2.setMouseCallback(window_name, on_mouse)
-        cv2.imshow(window_name, disp)
+            cv2.namedWindow(window_name)
+            cv2.setMouseCallback(window_name, on_mouse)
+            cv2.imshow(window_name, disp)
 
-        while True:
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or len(points_disp) >= max_points:
-                break
+            while True:
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or len(points_disp) >= max_points:
+                    break
 
-        cv2.destroyAllWindows()
+            cv2.destroyAllWindows()
 
-        labels_final, labels_indices, img_crop, crop_bounds = crop_labels(label_unified, img, points_disp)
+            if len(points_disp) != max_points:
+                raise SystemExit(
+                    f"Expected {max_points} clicked points for manual crop, but got {len(points_disp)}."
+                )
+            crop_bounds = get_crop_bounds_from_points(points_disp)
+
+        labels_final, labels_indices, img_crop, crop_bounds = crop_labels(label_unified, img, crop_bounds)
 
         require_overlap_selection = ask_weight_map_mode(img_crop, use_weight_key, zero_weight_key)
 
